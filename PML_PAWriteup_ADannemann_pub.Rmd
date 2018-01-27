@@ -1,0 +1,146 @@
+---
+title: "Practical Machine Learning - Prediction Assignment Writeup - Andre Dannemann"
+author: "Andre Dannemann"
+date: "27 January 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE, echo=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(caret)
+set.seed(123456)
+```
+
+## About my submission
+  
+I wasn't sure, whether I should show the code chunks in the result or not. I decided not to, as the submission description says to submit both, the Rmd file and the compiled HTML file. Therefore I created this analysis more in a sense, what I would show to non-technical recipients. All code chunks are in the Rmd-file.  
+If you decided differently, I fully understand that. However, I'd like to ask you to be gentle when grading my submission and not cutting points due to my decision.  
+If you don't find the answers to your questions in the Rmd file, feel free to cut points in the grading.  
+
+## Exploratory data analysis
+  
+```{r exp_anal_1, echo=FALSE}
+training <- read.csv("~/Coursera/MachineLearning/Project/pml-training.csv")
+testing <- read.csv("~/Coursera/MachineLearning/Project/pml-testing.csv")
+```
+  
+After reading in the data, I did some exploratory data analysis (not shown here to save reading time) during which I found, that  
+* the training data is quite big (> 19000 records), the test data consists of only 20 records and has the classe variable not filled, therefore it is not intended to be the test set in a cross validation sense; due to this, I decided to split the training data further into a training and a test set to cross validate my model  
+* both data sets contain a large number of columns, that contain mostly NAs; I decided to ignore those columns as I found out that the train-Function isn't working with them  
+* the training data contained two different types of lines; most lines contained only the measurements, the rest of the lines contained processed values (like means, skewness). As the test data didn't contain this sort of lines, building a model on them doesn't make sense as I wouldn't be able to predict the result for these lines.  
+  
+I therefore perform the following steps to prepare the data for model building  
+* take out all lines with "new_window=yes"  
+* take out all columns that contain NAs (in the remaining lines with "no")  
+* take out the first 7 columns, as they contain the name of the athlete, timestamps and so on
+  
+```{r exp_anal_2, echo=FALSE}
+# skip rows with "new_window = yes"
+training_2 <- training[training$new_window!="yes", ]
+# how many rows are left?
+#dim(training_2)
+# create a vector that will later contain the columns to be ignored
+cols_ignore <- vector("numeric", length = ncol(training_2))
+# add first 7 columns to be ignored
+cols_ignore <- c(1:7)
+# look through each column, whether it's a factor (then add it to ignore)
+# or whether it contains NAs (then add it to ignore)
+for(i in 8:(ncol(training_2)-1)) {
+        if(class(training_2[,i]) == "factor") {
+            cols_ignore <- c(cols_ignore, i)
+        } else {
+            nr_nas <- sum(is.na(training_2[,i]))
+            if (nr_nas > 0) {
+                cols_ignore <- c(cols_ignore, i)
+            }
+        }
+}
+```
+  
+Now I have a vector containing the columns to ignore. I will apply this to the training and the test data.  
+
+```{r exp_anal_3, echo=FALSE}
+training_mod <- training_2[, -cols_ignore]
+dim(training_mod)
+# I'll directly prepare the test dataset in the same way
+# no need to take out the lines with "new_window=yes" as there aren't any in the test data
+testing_mod <- testing[, -cols_ignore]
+```
+  
+dim shows, that I now have still more than 19000 lines with 53 columns, 52 predictors and 1 outcome.  
+  
+## Cross validation
+  
+As written before, to cross validate my model later, I have to split the training data into two subsets, sub_training and sub_testing. I'll use 80% for the training data (as 90% created error messages on my laptop)  
+```{r prepare_train_test_data, echo=FALSE}
+inTrain <- createDataPartition(y=training_mod$classe,p=0.8, list=FALSE)
+sub_training <- training_mod[inTrain, ]
+sub_testing  <- training_mod[-inTrain, ]
+```
+ 
+## Model selection
+  
+### Random Forest  
+  
+I'll first build a model with random forest (with 10 trees) and calculate the accuracy of the model by predicting on my training and test set (not yet on the provided test set).  
+```{r predict_random_forest, cache=TRUE}
+mod_rf <- train(classe ~ ., method="rf", data = sub_training, prox=TRUE, ntree=10)
+```
+
+```{r predict_rf, echo=FALSE}
+# predict on the training data (to calculate in sample error)
+mod_rf_pred_train <- predict(mod_rf)
+# predict on the test data
+mod_rf_pred_test <- predict(mod_rf, newdata=sub_testing)
+```
+  
+```{r out_of_sample_error_rf, echo=FALSE}
+rf_predRight_train <- mod_rf_pred_train==sub_training$classe
+rf_predRight_test <- mod_rf_pred_test==sub_testing$classe
+rbind ("Train Data" = c("Accuracy" = mean(rf_predRight_train),
+                        "Total Correct" = sum(rf_predRight_train),
+                        "Total Recs" = length(rf_predRight_train)),
+       "Test Data" = c("Accuracy" = mean(rf_predRight_test),
+                       "Total Correct" = sum(rf_predRight_test),
+                       "Total Recs" = length(rf_predRight_test)))
+```
+  
+Accuracy is really good. The predictions on the training data are nearly 100% right, on the test data the predictions are 99% right. The out of sample error is a little bit higher than the in sample error, but this was expected. The error on the 20 test records might even be higher than the 1% on the test set derived from the training data, however, having an error of slightly over 1 % on 20 records leaves me with the hope to have all 20 records predicted right.
+
+### Boosting  
+  
+I will also train a model with boosting and show the accuracy.
+```{r predict_with_boosting, cache=TRUE, warning=FALSE, error=FALSE, message=FALSE}
+mod_gbm <- train(classe ~ ., method="gbm", data = sub_training, verbose=F)
+```
+
+```{r predict_gbm, echo=FALSE}
+mod_gbm_pred_train <- predict(mod_gbm)
+# predict on the test data
+mod_gbm_pred_test <- predict(mod_gbm, newdata=sub_testing)
+#table(mod_gbm_pred_test,sub_testing$classe)
+```
+  
+```{r out_of_sample_error_gbm, echo=FALSE}
+gbm_predRight_train <- mod_gbm_pred_train==sub_training$classe
+gbm_predRight_test <- mod_gbm_pred_test==sub_testing$classe
+rbind ("Train Data" = c("Accuracy" = mean(gbm_predRight_train),
+                        "Total Correct" = sum(gbm_predRight_train),
+                        "Total Recs" = length(gbm_predRight_train)),
+       "Test Data" = c("Accuracy" = mean(gbm_predRight_test),
+                       "Total Correct" = sum(gbm_predRight_test),
+                       "Total Recs" = length(gbm_predRight_test)))
+```
+  
+Accuracy is not as good as with random forests, so I'll predict the 20 test records with my model from the random forest.  
+  
+## Prediction of test set
+
+I use the random forest model to predict the outcome on the 20 test records.  
+  
+```{r predict_20_test_records, echo=FALSE}
+pred_testing <- predict(mod_rf, newdata=testing_mod[,1:52])
+result_testing <- data.frame("Problem Id" = testing_mod[, 53], "Predicted Classe" = pred_testing)
+result_testing
+```
+
